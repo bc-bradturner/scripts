@@ -6,7 +6,14 @@
 #
 # -x/--exclude PATTERN   Drop lines matching PATTERN (grep -E, repeatable, applied like grep -v)
 
+# Always-excluded patterns (noisy/known-benign). Add more strings here as needed.
+typeset -a default_exclude_patterns
+default_exclude_patterns=(
+    'App Registry server error'
+)
+
 typeset -a exclude_patterns
+exclude_patterns=("${default_exclude_patterns[@]}")
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -x|--exclude)
@@ -54,20 +61,27 @@ while IFS= read -r line; do
             rest="$content"
         fi
 
-        # One-line condensed header
-        printf "\033[36m%s\033[0m %s:%s[%s]" "$timestamp" "$hostname" "$process" "$pid"
-        [[ -n "$level" ]] && printf " \033[33m%s\033[0m" "$level"
-        echo
+        # Trim noisy, always-the-same host/process boilerplate and log prefix
+        hostname="${hostname%-cloud-dev-vm}"
+        process="${process#bigcommerce_app}"
+        level="${level#BigcommerceApp.}"
 
-        # Split message from JSON
+        # Split message from JSON so we can put the first log line on the header row
         if [[ $rest =~ "^([^{]+)(.+)$" ]]; then
             msg="${match[1]%% }"
             json_content="$match[2]"
+        else
+            msg="$rest"
+            json_content=""
+        fi
 
-            [[ -n "$msg" ]] && echo "  $msg"
+        # One-line condensed header, ending with a separator and the message
+        printf "\033[36m%s\033[0m %s%s[%s]" "$timestamp" "$hostname" "$process" "$pid"
+        [[ -n "$level" ]] && printf " \033[33m%s\033[0m" "$level"
+        printf " │ %s\n" "$msg"
 
-            # Extract each JSON object/array and print it compact (one line, valid JSON)
-            if [[ -n "$json_content" ]] && command -v python3 &>/dev/null; then
+        # Extract each JSON object/array and print it compact (one line, valid JSON)
+        if [[ -n "$json_content" ]] && command -v python3 &>/dev/null; then
                 LOG_JSON_CONTENT="$json_content" python3 <<'PYTHON'
 import json
 import os
@@ -104,11 +118,8 @@ for i, char in enumerate(content):
                 print("  " + raw)
             start = -1
 PYTHON
-            elif [[ -n "$json_content" ]]; then
-                echo "  $json_content"
-            fi
-        else
-            [[ -n "$rest" ]] && echo "  $rest"
+        elif [[ -n "$json_content" ]]; then
+            echo "  $json_content"
         fi
     else
         # Line doesn't match log format, print as-is
